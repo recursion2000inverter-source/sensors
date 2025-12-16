@@ -1,111 +1,135 @@
-import { useEffect, useState } from "react";
-import { checkServerHealth, fetchLatestData } from "./services/api";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
+import "react-circular-progressbar/dist/styles.css";
 
-export default function App() {
+const API_BASE = "https://sensors-n1ny.onrender.com/api"; // FastAPI base
+
+function App() {
   const [serverOnline, setServerOnline] = useState(false);
   const [sensors, setSensors] = useState([]);
-  const [loading, setLoading] = useState(true);
 
-  // ----------------------------------------
-  // Server health check
-  // ----------------------------------------
-  const checkServer = async () => {
+  // Fetch health status
+  const fetchHealth = async () => {
     try {
-      await checkServerHealth();
-      setServerOnline(true);
+      const res = await axios.get(`${API_BASE}/health`);
+      setServerOnline(res.data.status === "online");
     } catch {
       setServerOnline(false);
     }
   };
 
-  // ----------------------------------------
   // Fetch latest sensor data
-  // ----------------------------------------
-  const loadSensors = async () => {
+  const fetchLatest = async () => {
     try {
-      const res = await fetchLatestData();
-      setSensors(res.data || []);
-    } catch {
+      const res = await axios.get(`${API_BASE}/latest`);
+      const sorted = res.data.sort((a, b) =>
+        a.room.localeCompare(b.room)
+      );
+      setSensors(sorted);
+    } catch (err) {
+      console.log("Error fetching latest data:", err);
       setSensors([]);
-    } finally {
-      setLoading(false);
     }
   };
 
-  // ----------------------------------------
-  // Auto refresh every 2 minutes
-  // ----------------------------------------
   useEffect(() => {
-    checkServer();
-    loadSensors();
+    fetchHealth();
+    fetchLatest();
 
+    // Auto-refresh every 2 minutes
     const interval = setInterval(() => {
-      checkServer();
-      loadSensors();
-    }, 120000); // 2 minutes
+      fetchHealth();
+      fetchLatest();
+    }, 120000);
 
     return () => clearInterval(interval);
   }, []);
 
-  // ----------------------------------------
-  // UI
-  // ----------------------------------------
   return (
     <div className="min-h-screen bg-gray-100 p-6">
-      <div className="max-w-6xl mx-auto">
-        <header className="mb-6 flex justify-between items-center">
-          <h1 className="text-2xl font-bold">
-            Room Sensor Dashboard
-          </h1>
-
+      <header className="mb-6">
+        <h1 className="text-3xl font-bold mb-2">Room Sensor Dashboard</h1>
+        <p>
+          Server:{" "}
           <span
-            className={`px-4 py-1 rounded-full text-sm font-medium ${
-              serverOnline
-                ? "bg-green-100 text-green-700"
-                : "bg-red-100 text-red-700"
-            }`}
+            className={serverOnline ? "text-green-600" : "text-red-600 font-bold"}
           >
-            Server: {serverOnline ? "Online" : "Offline"}
+            {serverOnline ? "Online" : "Offline"}
           </span>
-        </header>
+        </p>
+      </header>
 
-        {loading && (
-          <p className="text-gray-500">Loading sensor data…</p>
-        )}
+      {!serverOnline && (
+        <p className="text-red-500 mb-4">
+          Cannot fetch sensor data. Check your backend server.
+        </p>
+      )}
 
-        {!loading && sensors.length === 0 && (
-          <p className="text-gray-500">
-            No sensor data received yet.
-          </p>
-        )}
+      {sensors.length === 0 && serverOnline && (
+        <p className="text-gray-600">No sensor data received yet.</p>
+      )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {sensors.map((sensor) => (
-            <div
-              key={sensor.device_id}
-              className="bg-white rounded-xl shadow p-5"
-            >
-              <h2 className="text-lg font-semibold mb-2">
-                {sensor.room}
-              </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mt-4">
+        {sensors.map((sensor) => (
+          <div
+            key={sensor.device_id}
+            className="bg-white p-4 rounded-lg shadow"
+          >
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-xl font-semibold">{sensor.room}</h2>
+              <span className="text-xs text-gray-500">
+                {sensor.timestamp
+                  ? new Date(sensor.timestamp).toLocaleString()
+                  : ""}
+              </span>
+            </div>
 
-              <p className="text-sm text-gray-500 mb-4">
-                Device ID: {sensor.device_id}
-              </p>
-
-              <div className="space-y-2">
-                <div>🌡 Temperature: <strong>{sensor.temperature} °C</strong></div>
-                <div>💧 Humidity: <strong>{sensor.humidity} %</strong></div>
-                <div>⏱ Pressure: <strong>{sensor.pressure} hPa</strong></div>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="flex flex-col items-center">
+                <CircularProgressbar
+                  value={sensor.temperature}
+                  maxValue={50}
+                  text={`${sensor.temperature}°C`}
+                  styles={buildStyles({
+                    pathColor: "#f87171",
+                    textColor: "#f87171",
+                  })}
+                />
+                <span className="mt-2 text-sm">Temp</span>
               </div>
 
-              <p className="mt-4 text-xs text-gray-400">
-                Updated: {new Date(sensor.timestamp).toLocaleString()}
-              </p>
+              <div className="flex flex-col items-center">
+                <CircularProgressbar
+                  value={sensor.humidity}
+                  maxValue={100}
+                  text={`${sensor.humidity}%`}
+                  styles={buildStyles({
+                    pathColor: "#3b82f6",
+                    textColor: "#3b82f6",
+                  })}
+                />
+                <span className="mt-2 text-sm">Humidity</span>
+              </div>
+
+              <div className="flex flex-col items-center">
+                <CircularProgressbar
+                  value={sensor.pressure}
+                  maxValue={1100}
+                  text={`${sensor.pressure} hPa`}
+                  styles={buildStyles({
+                    pathColor: "#34d399",
+                    textColor: "#34d399",
+                  })}
+                />
+                <span className="mt-2 text-sm">Pressure</span>
+              </div>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
+
+export default App;
