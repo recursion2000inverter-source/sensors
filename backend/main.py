@@ -47,9 +47,15 @@ def receive_data(data: SensorData):
     }
 
     history = []
+
     if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            history = json.load(f)
+        try:
+            with open(file_path, "r") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, list):
+                    history = loaded
+        except Exception:
+            history = []
 
     history.append(record)
 
@@ -67,23 +73,33 @@ def receive_data(data: SensorData):
 @app.get("/api/latest")
 def latest():
     sensors = []
+
     for fname in os.listdir(DATA_DIR):
         if not fname.endswith(".json"):
             continue
 
-        with open(os.path.join(DATA_DIR, fname)) as f:
-            records = json.load(f)
+        file_path = os.path.join(DATA_DIR, fname)
 
-        if records:
-            last = records[-1]
-            sensors.append({
-                "device_id": fname.replace(".json", ""),
-                "room": last["room"],
-                "temperature": last["temperature"],
-                "humidity": last["humidity"],
-                "pressure": last["pressure"],
-                "timestamp": last["timestamp"]
-            })
+        try:
+            with open(file_path, "r") as f:
+                records = json.load(f)
+        except Exception:
+            continue
+
+        # IMPORTANT: ensure records is a non-empty list
+        if not isinstance(records, list) or len(records) == 0:
+            continue
+
+        last = records[-1]
+
+        sensors.append({
+            "device_id": fname.replace(".json", ""),
+            "room": last.get("room", "Unknown"),
+            "temperature": last.get("temperature"),
+            "humidity": last.get("humidity"),
+            "pressure": last.get("pressure"),
+            "timestamp": last.get("timestamp")
+        })
 
     sensors.sort(key=lambda x: x["room"])
     return sensors
@@ -93,7 +109,7 @@ def health():
     return {"status": "online"}
 
 # --------------------------------------------------
-# FRONTEND (SAFE MOUNT)
+# FRONTEND (SAFE STATIC SERVE)
 # --------------------------------------------------
 if os.path.exists(ASSETS_DIR):
     app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
@@ -105,9 +121,8 @@ def serve_frontend():
         return FileResponse(index_file)
 
     return JSONResponse(
-        status_code=200,
         content={
-            "message": "Backend running. Frontend not built yet.",
-            "hint": "Run `npm run build` inside frontend folder."
+            "message": "Backend running. Frontend not built.",
+            "hint": "Run npm run build in frontend."
         }
     )
