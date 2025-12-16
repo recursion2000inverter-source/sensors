@@ -1,71 +1,111 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
-import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
-import "react-circular-progressbar/dist/styles.css";
-
-const API_BASE = "http://192.168.0.193:8000";
+import { checkServerHealth, fetchLatestData } from "./services/api";
 
 export default function App() {
+  const [serverOnline, setServerOnline] = useState(false);
   const [sensors, setSensors] = useState([]);
-  const [status, setStatus] = useState("offline");
+  const [loading, setLoading] = useState(true);
 
-  const loadData = async () => {
+  // ----------------------------------------
+  // Server health check
+  // ----------------------------------------
+  const checkServer = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/latest`);
-      setSensors(res.data);
-      setStatus("online");
+      await checkServerHealth();
+      setServerOnline(true);
     } catch {
-      setStatus("offline");
+      setServerOnline(false);
     }
   };
 
+  // ----------------------------------------
+  // Fetch latest sensor data
+  // ----------------------------------------
+  const loadSensors = async () => {
+    try {
+      const res = await fetchLatestData();
+      setSensors(res.data || []);
+    } catch {
+      setSensors([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ----------------------------------------
+  // Auto refresh every 2 minutes
+  // ----------------------------------------
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 120000);
+    checkServer();
+    loadSensors();
+
+    const interval = setInterval(() => {
+      checkServer();
+      loadSensors();
+    }, 120000); // 2 minutes
+
     return () => clearInterval(interval);
   }, []);
 
+  // ----------------------------------------
+  // UI
+  // ----------------------------------------
   return (
     <div className="min-h-screen bg-gray-100 p-6">
-      <header className="text-center mb-8">
-        <h1 className="text-3xl font-bold">Room Sensor Dashboard</h1>
-        <p className={`text-sm ${status === "online" ? "text-green-600" : "text-red-600"}`}>
-          Server: {status}
-        </p>
-      </header>
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-6 flex justify-between items-center">
+          <h1 className="text-2xl font-bold">
+            Room Sensor Dashboard
+          </h1>
 
-      <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {sensors.map((s) => (
-          <div key={s.device_id} className="bg-white p-6 rounded-2xl shadow">
-            <h2 className="text-xl font-semibold text-center mb-4">{s.room}</h2>
+          <span
+            className={`px-4 py-1 rounded-full text-sm font-medium ${
+              serverOnline
+                ? "bg-green-100 text-green-700"
+                : "bg-red-100 text-red-700"
+            }`}
+          >
+            Server: {serverOnline ? "Online" : "Offline"}
+          </span>
+        </header>
 
-            <div className="flex justify-between">
-              <Dial value={s.temperature} max={50} label="°C" color="#ef4444" />
-              <Dial value={s.humidity} max={100} label="%" color="#3b82f6" />
-              <Dial value={s.pressure} min={900} max={1100} label="hPa" color="#10b981" />
+        {loading && (
+          <p className="text-gray-500">Loading sensor data…</p>
+        )}
+
+        {!loading && sensors.length === 0 && (
+          <p className="text-gray-500">
+            No sensor data received yet.
+          </p>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {sensors.map((sensor) => (
+            <div
+              key={sensor.device_id}
+              className="bg-white rounded-xl shadow p-5"
+            >
+              <h2 className="text-lg font-semibold mb-2">
+                {sensor.room}
+              </h2>
+
+              <p className="text-sm text-gray-500 mb-4">
+                Device ID: {sensor.device_id}
+              </p>
+
+              <div className="space-y-2">
+                <div>🌡 Temperature: <strong>{sensor.temperature} °C</strong></div>
+                <div>💧 Humidity: <strong>{sensor.humidity} %</strong></div>
+                <div>⏱ Pressure: <strong>{sensor.pressure} hPa</strong></div>
+              </div>
+
+              <p className="mt-4 text-xs text-gray-400">
+                Updated: {new Date(sensor.timestamp).toLocaleString()}
+              </p>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
-    </div>
-  );
-}
-
-function Dial({ value, min = 0, max, label, color }) {
-  return (
-    <div className="w-24">
-      <CircularProgressbar
-        value={value}
-        minValue={min}
-        maxValue={max}
-        text={`${value.toFixed(1)}${label}`}
-        styles={buildStyles({
-          pathColor: color,
-          textColor: "#111827",
-          trailColor: "#e5e7eb",
-          textSize: "14px",
-        })}
-      />
     </div>
   );
 }
