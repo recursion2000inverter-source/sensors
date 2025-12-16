@@ -1,85 +1,92 @@
-import { useState, useEffect } from "react";
-import axios from "axios";
-import { CircularProgressbar, buildStyles } from "react-circular-progressbar";
-import 'react-circular-progressbar/dist/styles.css';
+import { useEffect, useState } from "react";
 
-const API_BASE = "/api"; // Relative path to FastAPI backend
+export default function App() {
+  const [data, setData] = useState([]);
+  const [error, setError] = useState(null);
+  const [online, setOnline] = useState(true);
 
-function App() {
-  const [devices, setDevices] = useState([]);
-  const [serverOnline, setServerOnline] = useState(false);
-
-  const fetchData = async () => {
+  async function loadData() {
     try {
-      const res = await axios.get(`${API_BASE}/latest`);
-      if (res.status === 200) {
-        setDevices(res.data.sort((a, b) => a.room.localeCompare(b.room)));
-        setServerOnline(true);
-      }
-    } catch (error) {
-      console.error("Cannot fetch sensor data", error);
-      setServerOnline(false);
-      setDevices([]);
+      const res = await fetch("/api/latest");
+      if (!res.ok) throw new Error("Backend error");
+      const json = await res.json();
+      setData(json);
+      setOnline(true);
+    } catch {
+      setOnline(false);
+      setError("Cannot fetch sensor data");
     }
-  };
+  }
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 120000); // refresh every 2 minutes
-    return () => clearInterval(interval);
+    loadData();
+    const id = setInterval(loadData, 5000);
+    return () => clearInterval(id);
   }, []);
 
+  const rooms = {};
+  data.forEach(d => {
+    const room = d.room || "Unknown";
+    if (!rooms[room]) rooms[room] = [];
+    rooms[room].push(d);
+  });
+
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <h1 className="text-3xl font-bold mb-4">Room Sensor Dashboard</h1>
-      <p className="mb-4">
-        Server: <span className={serverOnline ? "text-green-600" : "text-red-600"}>
-          {serverOnline ? "Online" : "Offline"}
-        </span>
+    <div style={styles.page}>
+      <h1>Room Sensor Dashboard</h1>
+
+      <p>
+        Server:{" "}
+        <strong style={{ color: online ? "green" : "red" }}>
+          {online ? "Online" : "Offline"}
+        </strong>
       </p>
 
-      {devices.length === 0 && (
+      {error && <p style={{ color: "red" }}>{error}</p>}
+
+      {Object.keys(rooms).length === 0 && (
         <p>No sensor data received yet.</p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {devices.map((d) => (
-          <div key={d.device_id} className="bg-white shadow rounded p-4">
-            <h2 className="text-xl font-semibold mb-2">{d.room}</h2>
-            <div className="flex justify-around items-center">
-              <div className="w-24 h-24">
-                <CircularProgressbar
-                  value={d.temperature}
-                  maxValue={50}
-                  text={`${d.temperature}°C`}
-                  styles={buildStyles({ pathColor: "#f87171", textColor: "#111" })}
-                />
-              </div>
-              <div className="w-24 h-24">
-                <CircularProgressbar
-                  value={d.humidity}
-                  maxValue={100}
-                  text={`${d.humidity}%`}
-                  styles={buildStyles({ pathColor: "#3b82f6", textColor: "#111" })}
-                />
-              </div>
-              <div className="w-24 h-24">
-                <CircularProgressbar
-                  value={d.pressure}
-                  maxValue={1200} // approximate hPa range
-                  text={`${d.pressure} hPa`}
-                  styles={buildStyles({ pathColor: "#10b981", textColor: "#111" })}
-                />
-              </div>
+      {Object.entries(rooms).map(([room, sensors]) => (
+        <div key={room} style={styles.room}>
+          <h2>{room}</h2>
+
+          {sensors.map(sensor => (
+            <div key={sensor.device_id} style={styles.card}>
+              <strong>Device:</strong> {sensor.device_id}<br />
+              🌡 Temperature: {sensor.temperature} °C<br />
+              💧 Humidity: {sensor.humidity} %<br />
+              🧭 Pressure: {sensor.pressure} hPa<br />
+              <small>
+                Last updated:{" "}
+                {sensor.last_updated
+                  ? new Date(sensor.last_updated).toLocaleString()
+                  : "—"}
+              </small>
             </div>
-            <p className="mt-2 text-gray-500 text-sm">
-              Last updated: {new Date(d.timestamp).toLocaleString()}
-            </p>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
 
-export default App;
+const styles = {
+  page: {
+    fontFamily: "Arial, sans-serif",
+    padding: "20px",
+    background: "#f5f5f5",
+    minHeight: "100vh"
+  },
+  room: {
+    marginBottom: "30px"
+  },
+  card: {
+    background: "white",
+    padding: "10px",
+    marginBottom: "10px",
+    borderRadius: "6px",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+  }
+};
