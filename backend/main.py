@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIST = os.path.abspath(
-    os.path.join(BASE_DIR, "..", "frontend", "dist")
+    os.path.join(BASE_DIR,"..", "frontend", "dist")
 )
 
 app = FastAPI()
