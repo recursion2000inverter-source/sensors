@@ -1,67 +1,60 @@
+import os
+from datetime import datetime
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
-import json
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Sensor API")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIST = os.path.abspath(
+    os.path.join(BASE_DIR, "..", "frontend", "dist")
+)
 
-BASE_DIR = Path(__file__).resolve().parent
-FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
-DATA_FILE = BASE_DIR / "data.json"
+app = FastAPI()
 
-# -------------------------
-# Frontend (Vite build)
-# -------------------------
-if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# -------------------------
-# Utilities
-# -------------------------
-def load_records():
-    if not DATA_FILE.exists():
-        return []
+# In-memory sensor store (safe default)
+sensor_records = []
 
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                return data
-            return [data]  # normalize single object to list
-    except Exception:
-        return []
+# --------------------
+# API ENDPOINTS
+# --------------------
 
-# -------------------------
-# API Routes
-# -------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "online"}
 
 @app.get("/api/latest")
 def latest():
-    records = load_records()
+    if not sensor_records:
+        return {"data": None}
+    return sensor_records[-1]
 
-    if not records:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "message": "No sensor data available yet",
-                "data": None
-            }
-        )
+@app.post("/api/sensordata")
+def receive_data(payload: dict):
+    payload["received_at"] = datetime.utcnow().isoformat()
+    sensor_records.append(payload)
+    return {"status": "ok"}
 
-    return records[-1]
+# --------------------
+# FRONTEND SERVING
+# --------------------
 
-# -------------------------
-# Frontend entry
-# -------------------------
+assets_path = os.path.join(FRONTEND_DIST, "assets")
+if os.path.isdir(assets_path):
+    app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
+
 @app.get("/")
-def index():
-    if FRONTEND_DIST.exists():
-        return FileResponse(FRONTEND_DIST / "index.html")
-
+def serve_frontend():
+    index_file = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.isfile(index_file):
+        return FileResponse(index_file)
     return {
         "message": "Backend running. Frontend not built.",
         "hint": "Run npm run build in frontend."
