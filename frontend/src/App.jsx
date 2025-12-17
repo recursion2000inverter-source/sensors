@@ -1,107 +1,175 @@
-import React, { useEffect, useState } from "react";
-import dayjs from "dayjs";
+import { useEffect, useState } from "react";
 
-// Dial component with full circle
-const Dial = ({ label, value, max, color }) => {
-  const radius = 40;
+const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/* ---------- Compact Dial ---------- */
+function Dial({ value, min, max, label, unit, color, disabled }) {
+  const radius = 36;
+  const stroke = 6;
+  const size = 96;
+  const center = size / 2;
   const circumference = 2 * Math.PI * radius;
-  const angle = Math.min(value / max, 1);
-  const dashLength = circumference * angle;
+  const clamped = Math.min(Math.max(value, min), max);
+  const offset =
+    circumference -
+    ((clamped - min) / (max - min)) * circumference;
 
   return (
-    <div className="flex flex-col items-center m-2">
-      <svg width="100" height="100">
+    <div className="flex flex-col items-center w-1/3">
+      <svg width={size} height={size}>
         <circle
-          cx="50"
-          cy="50"
+          cx={center}
+          cy={center}
           r={radius}
-          fill="none"
           stroke="#e5e7eb"
-          strokeWidth="10"
+          strokeWidth={stroke}
+          fill="none"
         />
         <circle
-          cx="50"
-          cy="50"
+          cx={center}
+          cy={center}
           r={radius}
+          stroke={disabled ? "#9ca3af" : color}
+          strokeWidth={stroke}
           fill="none"
-          stroke={color}
-          strokeWidth="10"
-          strokeDasharray={`${dashLength} ${circumference}`}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
           strokeLinecap="round"
-          transform="rotate(-90 50 50)"
+          transform={`rotate(-90 ${center} ${center})`}
         />
         <text
-          x="50"
-          y="55"
+          x="50%"
+          y="50%"
+          dy="0.35em"
           textAnchor="middle"
-          fontSize="16"
-          fontWeight="bold"
-          fill="#111"
+          className="text-sm font-bold fill-gray-800"
         >
-          {value}
+          {value.toFixed(1)}
         </text>
       </svg>
-      <div className="text-center mt-1 font-semibold">{label}</div>
+      <div className="text-[11px] font-semibold leading-tight text-center">
+        {label} ({unit})
+      </div>
     </div>
   );
-};
+}
 
-const App = () => {
-  const [devices, setDevices] = useState([]);
-
-  const fetchData = async () => {
-    try {
-      const res = await fetch("/api/latest");
-      if (res.ok) {
-        const data = await res.json();
-        setDevices(data);
-      } else {
-        setDevices([]);
-      }
-    } catch (err) {
-      console.error(err);
-      setDevices([]);
-    }
-  };
+/* ---------- App ---------- */
+export default function App() {
+  const [devices, setDevices] = useState({});
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+    fetch("/api/latest")
+      .then((r) => r.json())
+      .then((data) => {
+        const map = {};
+        data.forEach((d) => (map[d.device_id] = d));
+        setDevices(map);
+      });
   }, []);
 
-  if (devices.length === 0) {
-    return (
-      <div className="flex flex-col justify-center items-center h-screen text-xl">
-        <h1 className="text-3xl font-bold mb-4">Environment Vitals</h1>
-        No sensor data available.
-      </div>
-    );
-  }
+  useEffect(() => {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "initial") {
+        const map = {};
+        msg.data.forEach((d) => (map[d.device_id] = d));
+        setDevices(map);
+      } else {
+        setDevices((p) => ({ ...p, [msg.device_id]: msg }));
+      }
+    };
+
+    return () => ws.close();
+  }, []);
+
+  const list = Object.values(devices);
+
+  const isOffline = (ts) =>
+    Date.now() - new Date(ts).getTime() > OFFLINE_THRESHOLD_MS;
 
   return (
-    <div className="h-screen p-4 flex flex-col justify-start">
-      <h1 className="text-4xl font-bold text-center mb-6">Environment Vitals</h1>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 overflow-auto">
-        {devices.map((device) => (
-          <div
-            key={device.device_id}
-            className="bg-white rounded-xl shadow p-4 flex flex-col items-center"
-          >
-            <div className="font-bold text-lg mb-2">{device.room}</div>
-            <div className="flex flex-row">
-              <Dial label="Temp (°C)" value={device.temperature} max={50} color="#ef4444" />
-              <Dial label="Humidity (%)" value={device.humidity} max={100} color="#3b82f6" />
-              <Dial label="Pressure (hPa)" value={device.pressure} max={1100} color="#10b981" />
+    <div className="h-screen bg-gray-100 p-4 flex flex-col">
+      <h1 className="text-3xl font-bold text-center mb-3">
+        Environment Vitals
+      </h1>
+
+      <div
+        className="grid gap-4 flex-1"
+        style={{
+          gridTemplateColumns: `repeat(${list.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {list.map((d) => {
+          const offline = isOffline(d.timestamp);
+          const dt = new Date(d.timestamp);
+
+          return (
+            <div
+              key={d.device_id}
+              className={`rounded-xl border-2 shadow flex flex-col
+                ${offline ? "bg-gray-200 border-red-500" : "bg-white border-green-500"}
+              `}
+            >
+              {/* HEADER — FIXED HEIGHT */}
+              <div className="h-12 px-3 flex items-center justify-between">
+                <div className="font-bold text-sm truncate">
+                  {d.room}
+                </div>
+                <span
+                  className={`text-xs font-bold px-2 py-0.5 rounded
+                    ${offline ? "bg-red-600" : "bg-green-600"} text-white
+                  `}
+                >
+                  {offline ? "OFFLINE" : "ONLINE"}
+                </span>
+              </div>
+
+              {/* DIALS — FLEX, GUARANTEED FIT */}
+              <div className="flex-1 flex items-center justify-center px-2">
+                <div className="flex w-full justify-between">
+                  <Dial
+                    value={d.temperature}
+                    min={0}
+                    max={50}
+                    label="Temp"
+                    unit="°C"
+                    color="#ef4444"
+                    disabled={offline}
+                  />
+                  <Dial
+                    value={d.humidity}
+                    min={0}
+                    max={100}
+                    label="Humidity"
+                    unit="%"
+                    color="#3b82f6"
+                    disabled={offline}
+                  />
+                  <Dial
+                    value={d.pressure}
+                    min={900}
+                    max={1100}
+                    label="Pressure"
+                    unit="hPa"
+                    color="#10b981"
+                    disabled={offline}
+                  />
+                </div>
+              </div>
+
+              {/* FOOTER — FIXED HEIGHT */}
+              <div className="h-11 text-center text-xs font-bold flex flex-col justify-center">
+                <div>{dt.toLocaleDateString()}</div>
+                <div>{dt.toLocaleTimeString()}</div>
+              </div>
             </div>
-            <div className="mt-2 text-sm text-gray-700 font-bold">
-              {dayjs(device.timestamp).format("YYYY-MM-DD HH:mm:ss")}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
-};
-
-export default App;
+}
