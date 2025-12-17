@@ -1,33 +1,55 @@
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
+from pathlib import Path
+import json
 
 app = FastAPI()
 
-# Path to the frontend dist folder inside backend
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "dist")
-ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "data"
+FRONTEND_DIR = BASE_DIR / "dist"
 
-# Serve static assets (JS/CSS/images)
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
-
-# Serve index.html at root
+# Serve frontend
+app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 @app.get("/")
 async def root():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse({"message": "Frontend not built."}, status_code=404)
 
-# Serve API endpoint for sensor data
+# API endpoint to return latest readings per device
 @app.get("/api/latest")
 async def latest():
-    # Example dummy data
-    return [
-        {"room": "Living Room", "sensor": "Temperature", "value": 25, "last_updated": "2025-12-17 18:00:00"},
-        {"room": "Kitchen", "sensor": "Humidity", "value": 60, "last_updated": "2025-12-17 18:05:00"}
-    ]
-
-# Optional: catch-all to support frontend routing (React Router)
-@app.get("/{full_path:path}")
-async def catch_all(full_path: str):
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    result = []
+    json_files = list(DATA_DIR.glob("*.json"))
+    
+    if not json_files:
+        return JSONResponse({"message": "No sensor data found."}, status_code=404)
+    
+    for file_path in json_files:
+        try:
+            with open(file_path, "r") as f:
+                data = json.load(f)
+            
+            readings = data.get("data", [])
+            if not readings:
+                continue  # skip devices with no readings
+            
+            last = readings[-1]
+            result.append({
+                "device_id": data.get("device_id"),
+                "room": data.get("room"),
+                "timestamp": last.get("timestamp"),
+                "temperature": last.get("temperature"),
+                "humidity": last.get("humidity"),
+                "pressure": last.get("pressure")
+            })
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+    
+    if not result:
+        return JSONResponse({"message": "No valid readings available."}, status_code=404)
+    
+    return JSONResponse(result)
