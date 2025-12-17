@@ -1,61 +1,33 @@
-import os
-from datetime import datetime
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIST = os.path.abspath(
-    os.path.join(BASE_DIR,"..", "frontend", "dist")
-)
+from fastapi.responses import FileResponse
+import os
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Path to the frontend dist folder inside backend
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(BASE_DIR, "dist")
+ASSETS_DIR = os.path.join(FRONTEND_DIR, "assets")
 
-# In-memory sensor store (safe default)
-sensor_records = []
+# Serve static assets (JS/CSS/images)
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
-# --------------------
-# API ENDPOINTS
-# --------------------
-
-@app.get("/health")
-def health():
-    return {"status": "online"}
-
-@app.get("/api/latest")
-def latest():
-    if not sensor_records:
-        return {"data": None}
-    return sensor_records[-1]
-
-@app.post("/api/sensordata")
-def receive_data(payload: dict):
-    payload["received_at"] = datetime.utcnow().isoformat()
-    sensor_records.append(payload)
-    return {"status": "ok"}
-
-# --------------------
-# FRONTEND SERVING
-# --------------------
-
-assets_path = os.path.join(FRONTEND_DIST, "assets")
-if os.path.isdir(assets_path):
-    app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
-
+# Serve index.html at root
 @app.get("/")
-def serve_frontend():
-    index_file = os.path.join(FRONTEND_DIST, "index.html")
-    if os.path.isfile(index_file):
-        return FileResponse(index_file)
-    return {
-        "message": "Backend running. Frontend not built.",
-        "hint": "Run npm run build in frontend."
-    }
+async def root():
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+# Serve API endpoint for sensor data
+@app.get("/api/latest")
+async def latest():
+    # Example dummy data
+    return [
+        {"room": "Living Room", "sensor": "Temperature", "value": 25, "last_updated": "2025-12-17 18:00:00"},
+        {"room": "Kitchen", "sensor": "Humidity", "value": 60, "last_updated": "2025-12-17 18:05:00"}
+    ]
+
+# Optional: catch-all to support frontend routing (React Router)
+@app.get("/{full_path:path}")
+async def catch_all(full_path: str):
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
