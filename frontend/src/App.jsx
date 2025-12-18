@@ -2,59 +2,6 @@ import { useEffect, useState } from "react";
 
 const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
 
-/* ---------- Compact Dial ---------- */
-function Dial({ value, min, max, label, unit, color, disabled }) {
-  const radius = 36;
-  const stroke = 6;
-  const size = 96;
-  const center = size / 2;
-  const circumference = 2 * Math.PI * radius;
-  const clamped = Math.min(Math.max(value, min), max);
-  const offset =
-    circumference -
-    ((clamped - min) / (max - min)) * circumference;
-
-  return (
-    <div className="flex flex-col items-center w-1/3">
-      <svg width={size} height={size}>
-        <circle
-          cx={center}
-          cy={center}
-          r={radius}
-          stroke="#e5e7eb"
-          strokeWidth={stroke}
-          fill="none"
-        />
-        <circle
-          cx={center}
-          cy={center}
-          r={radius}
-          stroke={disabled ? "#9ca3af" : color}
-          strokeWidth={stroke}
-          fill="none"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${center} ${center})`}
-        />
-        <text
-          x="50%"
-          y="50%"
-          dy="0.35em"
-          textAnchor="middle"
-          className="text-sm font-bold fill-gray-800"
-        >
-          {value.toFixed(1)}
-        </text>
-      </svg>
-      <div className="text-[11px] font-semibold leading-tight text-center">
-        {label} ({unit})
-      </div>
-    </div>
-  );
-}
-
-/* ---------- App ---------- */
 export default function App() {
   const [devices, setDevices] = useState({});
 
@@ -93,7 +40,7 @@ export default function App() {
 
   return (
     <div className="h-screen bg-gray-100 p-4 flex flex-col">
-      <h1 className="text-3xl font-bold text-center mb-3">
+      <h1 className="text-3xl font-bold text-center mb-4">
         Environment Vitals
       </h1>
 
@@ -110,65 +57,73 @@ export default function App() {
           return (
             <div
               key={d.device_id}
-              className={`rounded-xl border-2 shadow flex flex-col
+              className={`rounded-xl border-2 shadow-md flex flex-col
                 ${offline ? "bg-gray-200 border-red-500" : "bg-white border-green-500"}
               `}
             >
-              {/* HEADER — FIXED HEIGHT */}
-              <div className="h-12 px-3 flex items-center justify-between">
+              {/* HEADER */}
+              <div className="h-12 px-4 flex items-center justify-between">
                 <div className="font-bold text-sm truncate">
                   {d.room}
                 </div>
-                <span
-                  className={`text-xs font-bold px-2 py-0.5 rounded
-                    ${offline ? "bg-red-600" : "bg-green-600"} text-white
-                  `}
-                >
-                  {offline ? "OFFLINE" : "ONLINE"}
-                </span>
-              </div>
 
-              {/* DIALS — FLEX, GUARANTEED FIT */}
-              <div className="flex-1 flex items-center justify-center px-2">
-                <div className="flex w-full justify-between">
-                  <Dial
-                    value={d.temperature}
-                    min={0}
-                    max={50}
-                    label="Temp"
-                    unit="°C"
-                    color="#ef4444"
-                    disabled={offline}
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-3 w-3 rounded-full
+                      ${offline ? "bg-red-600" : "bg-green-600"}
+                    `}
                   />
-                  <Dial
-                    value={d.humidity}
-                    min={0}
-                    max={100}
-                    label="Humidity"
-                    unit="%"
-                    color="#3b82f6"
-                    disabled={offline}
-                  />
-                  <Dial
-                    value={d.pressure}
-                    min={900}
-                    max={1100}
-                    label="Pressure"
-                    unit="hPa"
-                    color="#10b981"
-                    disabled={offline}
-                  />
+                  <span
+                    className={`text-xs font-bold
+                      ${offline ? "text-red-700" : "text-green-700"}
+                    `}
+                  >
+                    {offline ? "OFFLINE" : "ONLINE"}
+                  </span>
                 </div>
               </div>
 
-              {/* FOOTER — FIXED HEIGHT */}
-              <div className="h-11 text-center text-xs font-bold flex flex-col justify-center">
+              {/* METRICS */}
+              <div className="flex-1 px-6 py-4 flex flex-col justify-center gap-4">
+                <Metric
+                  label="Temperature"
+                  value={`${d.temperature.toFixed(1)} °C`}
+                  color="text-red-600"
+                />
+                <Metric
+                  label="Humidity"
+                  value={`${d.humidity.toFixed(1)} %`}
+                  color="text-blue-600"
+                />
+                <Metric
+                  label="Pressure"
+                  value={`${d.pressure.toFixed(1)} hPa`}
+                  color="text-emerald-600"
+                />
+              </div>
+
+              {/* FOOTER */}
+              <div className="h-12 text-center text-xs font-bold flex flex-col justify-center border-t">
                 <div>{dt.toLocaleDateString()}</div>
                 <div>{dt.toLocaleTimeString()}</div>
               </div>
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Metric Row ---------- */
+function Metric({ label, value, color }) {
+  return (
+    <div className="flex items-baseline justify-between">
+      <div className="text-sm font-medium text-gray-600">
+        {label}
+      </div>
+      <div className={`text-xl font-bold ${color}`}>
+        {value}
       </div>
     </div>
   );
