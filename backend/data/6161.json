@@ -2,7 +2,6 @@
   "device_id": 6161,
   "room": "Proteomics Lab",
   "data": [
-    
     {
       "timestamp": "2025-12-15T08:57:00.493636",
       "temperature": 30.17,
@@ -38,6 +37,30 @@
       "temperature": 29.99,
       "humidity": 76.83,
       "pressure": 1011.47
+    },
+    {
+      "timestamp": "2025-12-18T03:53:23.859480",
+      "temperature": 23.57,
+      "humidity": 75.28,
+      "pressure": 1014.17
+    },
+    {
+      "timestamp": "2025-12-18T03:55:23.770657",
+      "temperature": 22.91,
+      "humidity": 76.02,
+      "pressure": 1018.9
+    },
+    {
+      "timestamp": "2025-12-18T03:57:23.773148",
+      "temperature": 20.77,
+      "humidity": 60.67,
+      "pressure": 1009.87
+    },
+    {
+      "timestamp": "2025-12-18T03:59:23.884831",
+      "temperature": 21.5,
+      "humidity": 43.2,
+      "pressure": 1014.17
     }
   ]
 }

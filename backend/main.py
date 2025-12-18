@@ -1,178 +1,120 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
-import asyncio
+import os
 
-# --------------------------------------------------
-# App setup
-# --------------------------------------------------
 app = FastAPI()
 
+# Paths
 BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
-FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
+DATA_FOLDER = BASE_DIR / "data"
+DATA_FOLDER.mkdir(exist_ok=True)
+FRONTEND_DIST = BASE_DIR / "dist"
 
-DATA_DIR.mkdir(exist_ok=True)
-
-# --------------------------------------------------
-# Serve frontend (Option 1)
-# --------------------------------------------------
-if FRONTEND_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
-
-    @app.get("/")
-    def serve_frontend():
-        return FileResponse(FRONTEND_DIR / "index.html")
+# Serve frontend assets
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 else:
-    @app.get("/")
-    def fallback():
-        return {
-            "message": "Backend running. Frontend not built.",
-            "hint": "Run npm run build in frontend and copy dist/"
-        }
+    print("dist folder not found! Copy your frontend build 'dist' into backend folder.")
 
-# --------------------------------------------------
-# WebSocket manager
-# --------------------------------------------------
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for ws in self.active_connections:
-            await ws.send_json(message)
-
-manager = ConnectionManager()
-
-@app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await manager.connect(ws)
-    try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(ws)
-
-# --------------------------------------------------
-# Incoming sensor payload
-# --------------------------------------------------
-class SensorPayload(BaseModel):
-    device_id: int
-    room: str
-    temperature: float
-    humidity: float
-    pressure: float
-
-# --------------------------------------------------
-# Save sensor data
-# --------------------------------------------------
-@app.post("/api/sensordata")
-async def receive_sensor_data(payload: SensorPayload):
-    file_path = DATA_DIR / f"{payload.device_id}.json"
-    now = datetime.utcnow()
-
-    entry = {
-        "timestamp": now.isoformat(),
-        "temperature": payload.temperature,
-        "humidity": payload.humidity,
-        "pressure": payload.pressure
-    }
-
+# Helper: Save device data
+def save_device_data(device_id: int, room: str, temperature: float, humidity: float, pressure: float):
+    file_path = DATA_FOLDER / f"{device_id}.json"
     if file_path.exists():
         with open(file_path, "r") as f:
-            content = json.load(f)
+            try:
+                data_json = json.load(f)
+            except:
+                data_json = {"device_id": device_id, "room": room, "data": []}
     else:
-        content = {
-            "device_id": payload.device_id,
-            "room": payload.room,
-            "last_seen": None,
-            "data": []
-        }
+        data_json = {"device_id": device_id, "room": room, "data": []}
 
-    content["room"] = payload.room
-    content["last_seen"] = now.isoformat()
-    content["data"].append(entry)
-
-    with open(file_path, "w") as f:
-        json.dump(content, f, indent=2)
-
-    # Broadcast live update
-    await manager.broadcast({
-        "device_id": payload.device_id,
-        "room": payload.room,
-        "latest": entry,
-        "last_seen": content["last_seen"],
-        "status": "online"
+    data_json["room"] = room
+    data_json["device_id"] = device_id
+    data_json["data"].append({
+        "timestamp": datetime.utcnow().isoformat(),
+        "temperature": temperature,
+        "humidity": humidity,
+        "pressure": pressure
     })
 
-    return {"status": "ok"}
+    with open(file_path, "w") as f:
+        json.dump(data_json, f, indent=2)
 
-# --------------------------------------------------
-# Get latest data for all devices
-# --------------------------------------------------
-@app.get("/api/latest")
-def get_latest_data():
-    results = []
+# Cleanup: Remove data older than 14 days
+def cleanup_old_data():
     now = datetime.utcnow()
-
-    for file in DATA_DIR.glob("*.json"):
-        with open(file, "r") as f:
-            content = json.load(f)
-
-        if not content.get("data"):
+    for file in DATA_FOLDER.glob("*.json"):
+        try:
+            with open(file, "r") as f:
+                data_json = json.load(f)
+            filtered = [d for d in data_json.get("data", []) if datetime.fromisoformat(d["timestamp"]) >= now - timedelta(days=14)]
+            data_json["data"] = filtered
+            with open(file, "w") as f:
+                json.dump(data_json, f, indent=2)
+        except:
             continue
 
-        latest = content["data"][-1]
-        last_seen = datetime.fromisoformat(content["last_seen"])
+# Endpoint: Receive device data from ESPs
+@app.post("/api/update")
+async def update_device(request: Request):
+    """
+    Expected JSON:
+    {
+      "device_id": 6161,
+      "room": "Proteomics Lab",
+      "temperature": 30.18,
+      "humidity": 60.2,
+      "pressure": 1011.6
+    }
+    """
+    try:
+        data = await request.json()
+        device_id = int(data["device_id"])
+        room = str(data["room"])
+        temperature = float(data["temperature"])
+        humidity = float(data["humidity"])
+        pressure = float(data["pressure"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid data format: {e}")
 
-        status = "online" if now - last_seen < timedelta(minutes=5) else "offline"
+    save_device_data(device_id, room, temperature, humidity, pressure)
+    cleanup_old_data()
+    return JSONResponse({"status": "success", "message": "Data saved."})
 
-        results.append({
-            "device_id": content["device_id"],
-            "room": content["room"],
-            "temperature": latest["temperature"],
-            "humidity": latest["humidity"],
-            "pressure": latest["pressure"],
-            "timestamp": latest["timestamp"],
-            "status": status
-        })
+# Endpoint: Return latest data for all devices
+@app.get("/api/latest")
+async def latest():
+    devices = []
+    for file in DATA_FOLDER.glob("*.json"):
+        try:
+            with open(file) as f:
+                data_json = json.load(f)
+            if data_json.get("data"):
+                last_entry = data_json["data"][-1]
+                ts = datetime.fromisoformat(last_entry["timestamp"])
+                online = datetime.utcnow() - ts <= timedelta(minutes=5)
+                devices.append({
+                    "device_id": data_json["device_id"],
+                    "room": data_json["room"],
+                    "temperature": last_entry["temperature"],
+                    "humidity": last_entry["humidity"],
+                    "pressure": last_entry["pressure"],
+                    "timestamp": last_entry["timestamp"],
+                    "online": online
+                })
+        except:
+            continue
+    return {"devices": devices}
 
-    return results
-
-# --------------------------------------------------
-# 14-day cleanup task
-# --------------------------------------------------
-async def cleanup_task():
-    while True:
-        cutoff = datetime.utcnow() - timedelta(days=14)
-
-        for file in DATA_DIR.glob("*.json"):
-            with open(file, "r") as f:
-                content = json.load(f)
-
-            original_len = len(content["data"])
-            content["data"] = [
-                d for d in content["data"]
-                if datetime.fromisoformat(d["timestamp"]) >= cutoff
-            ]
-
-            if len(content["data"]) != original_len:
-                with open(file, "w") as f:
-                    json.dump(content, f, indent=2)
-
-        await asyncio.sleep(24 * 3600)  # run daily
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(cleanup_task())
+# Serve frontend index.html for root and any unmatched route
+@app.get("/")
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str = ""):
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse({"message": "Frontend not built."}, status_code=404)
