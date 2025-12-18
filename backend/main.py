@@ -1,26 +1,42 @@
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
 import asyncio
 
 # --------------------------------------------------
-# CONFIG
+# App setup
 # --------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent
+app = FastAPI()
+
+BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
-FRONTEND_DIR = BASE_DIR / "dist"
+FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
 
 DATA_DIR.mkdir(exist_ok=True)
 
-DATA_RETENTION_DAYS = 14
+# --------------------------------------------------
+# Serve frontend (Option 1)
+# --------------------------------------------------
+if FRONTEND_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 
-app = FastAPI(title="Environment Sensor Backend")
+    @app.get("/")
+    def serve_frontend():
+        return FileResponse(FRONTEND_DIR / "index.html")
+else:
+    @app.get("/")
+    def fallback():
+        return {
+            "message": "Backend running. Frontend not built.",
+            "hint": "Run npm run build in frontend and copy dist/"
+        }
 
 # --------------------------------------------------
-# WEBSOCKET MANAGER
+# WebSocket manager
 # --------------------------------------------------
 class ConnectionManager:
     def __init__(self):
@@ -31,171 +47,132 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                pass
-
+        for ws in self.active_connections:
+            await ws.send_json(message)
 
 manager = ConnectionManager()
 
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await manager.connect(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(ws)
+
 # --------------------------------------------------
-# UTILITIES
+# Incoming sensor payload
 # --------------------------------------------------
-def cleanup_old_data():
-    cutoff = datetime.utcnow() - timedelta(days=DATA_RETENTION_DAYS)
+class SensorPayload(BaseModel):
+    device_id: int
+    room: str
+    temperature: float
+    humidity: float
+    pressure: float
 
-    for file in DATA_DIR.glob("*.json"):
-        try:
-            with open(file, "r") as f:
-                content = json.load(f)
+# --------------------------------------------------
+# Save sensor data
+# --------------------------------------------------
+@app.post("/api/sensordata")
+async def receive_sensor_data(payload: SensorPayload):
+    file_path = DATA_DIR / f"{payload.device_id}.json"
+    now = datetime.utcnow()
 
-            filtered = [
-                r for r in content.get("data", [])
-                if datetime.fromisoformat(r["timestamp"]) >= cutoff
-            ]
+    entry = {
+        "timestamp": now.isoformat(),
+        "temperature": payload.temperature,
+        "humidity": payload.humidity,
+        "pressure": payload.pressure
+    }
 
-            content["data"] = filtered
+    if file_path.exists():
+        with open(file_path, "r") as f:
+            content = json.load(f)
+    else:
+        content = {
+            "device_id": payload.device_id,
+            "room": payload.room,
+            "last_seen": None,
+            "data": []
+        }
 
-            with open(file, "w") as f:
-                json.dump(content, f, indent=2)
+    content["room"] = payload.room
+    content["last_seen"] = now.isoformat()
+    content["data"].append(entry)
 
-        except Exception:
-            continue
-
-
-def load_device_file(device_id: int):
-    file_path = DATA_DIR / f"{device_id}.json"
-    if not file_path.exists():
-        return None
-    with open(file_path, "r") as f:
-        return json.load(f)
-
-
-def save_device_file(device_id: int, payload: dict):
-    file_path = DATA_DIR / f"{device_id}.json"
     with open(file_path, "w") as f:
-        json.dump(payload, f, indent=2)
+        json.dump(content, f, indent=2)
 
+    # Broadcast live update
+    await manager.broadcast({
+        "device_id": payload.device_id,
+        "room": payload.room,
+        "latest": entry,
+        "last_seen": content["last_seen"],
+        "status": "online"
+    })
 
-def get_latest_all_devices():
+    return {"status": "ok"}
+
+# --------------------------------------------------
+# Get latest data for all devices
+# --------------------------------------------------
+@app.get("/api/latest")
+def get_latest_data():
     results = []
+    now = datetime.utcnow()
 
     for file in DATA_DIR.glob("*.json"):
-        try:
-            with open(file, "r") as f:
-                content = json.load(f)
+        with open(file, "r") as f:
+            content = json.load(f)
 
-            if not content["data"]:
-                continue
-
-            latest = content["data"][-1]
-
-            results.append({
-                "device_id": content["device_id"],
-                "room": content["room"],
-                "temperature": latest["temperature"],
-                "humidity": latest["humidity"],
-                "pressure": latest["pressure"],
-                "timestamp": latest["timestamp"]
-            })
-        except Exception:
+        if not content.get("data"):
             continue
+
+        latest = content["data"][-1]
+        last_seen = datetime.fromisoformat(content["last_seen"])
+
+        status = "online" if now - last_seen < timedelta(minutes=5) else "offline"
+
+        results.append({
+            "device_id": content["device_id"],
+            "room": content["room"],
+            "temperature": latest["temperature"],
+            "humidity": latest["humidity"],
+            "pressure": latest["pressure"],
+            "timestamp": latest["timestamp"],
+            "status": status
+        })
 
     return results
 
 # --------------------------------------------------
-# API ENDPOINTS
+# 14-day cleanup task
 # --------------------------------------------------
-@app.post("/api/ingest")
-async def ingest_sensor_data(request: Request):
-    payload = await request.json()
+async def cleanup_task():
+    while True:
+        cutoff = datetime.utcnow() - timedelta(days=14)
 
-    device_id = payload["device_id"]
-    room = payload["room"]
+        for file in DATA_DIR.glob("*.json"):
+            with open(file, "r") as f:
+                content = json.load(f)
 
-    reading = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "temperature": payload["temperature"],
-        "humidity": payload["humidity"],
-        "pressure": payload["pressure"]
-    }
+            original_len = len(content["data"])
+            content["data"] = [
+                d for d in content["data"]
+                if datetime.fromisoformat(d["timestamp"]) >= cutoff
+            ]
 
-    device_data = load_device_file(device_id)
+            if len(content["data"]) != original_len:
+                with open(file, "w") as f:
+                    json.dump(content, f, indent=2)
 
-    if not device_data:
-        device_data = {
-            "device_id": device_id,
-            "room": room,
-            "data": []
-        }
+        await asyncio.sleep(24 * 3600)  # run daily
 
-    device_data["room"] = room
-    device_data["data"].append(reading)
-
-    save_device_file(device_id, device_data)
-    cleanup_old_data()
-
-    # Broadcast LIVE update
-    live_payload = {
-        "device_id": device_id,
-        "room": room,
-        **reading
-    }
-
-    await manager.broadcast(live_payload)
-
-    return {"status": "ok"}
-
-
-@app.get("/api/latest")
-def api_latest():
-    return get_latest_all_devices()
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-# --------------------------------------------------
-# WEBSOCKET ENDPOINT
-# --------------------------------------------------
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-
-    # Send initial snapshot
-    await websocket.send_json({
-        "type": "initial",
-        "data": get_latest_all_devices()
-    })
-
-    try:
-        while True:
-            await asyncio.sleep(60)  # keep connection alive
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-# --------------------------------------------------
-# FRONTEND SERVING
-# --------------------------------------------------
-if FRONTEND_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
-
-    @app.get("/")
-    def serve_frontend():
-        return FileResponse(FRONTEND_DIR / "index.html")
-else:
-    @app.get("/")
-    def no_frontend():
-        return JSONResponse(
-            {
-                "message": "Backend running. Frontend not built.",
-                "hint": "Run npm run build and copy dist/ into backend."
-            }
-        )
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(cleanup_task())
