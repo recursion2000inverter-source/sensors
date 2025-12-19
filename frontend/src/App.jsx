@@ -1,33 +1,25 @@
 import { useEffect, useState } from "react";
 
+const ONLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
 export default function App() {
   const [devices, setDevices] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   const fetchLatest = async () => {
     try {
       const res = await fetch("/api/latest");
       const data = await res.json();
       setDevices(data);
-      setLoading(false);
     } catch (err) {
-      console.error("Failed to fetch data", err);
+      console.error("Fetch failed", err);
     }
   };
 
   useEffect(() => {
-    fetchLatest(); // initial load
-    const interval = setInterval(fetchLatest, 120000); // 2 minutes
+    fetchLatest();
+    const interval = setInterval(fetchLatest, 120000);
     return () => clearInterval(interval);
   }, []);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">
-        Loading environment vitals...
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
@@ -36,36 +28,32 @@ export default function App() {
       </h1>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
-        {devices.map((device) => (
-          <DeviceCard key={device.device_id} {...device} />
+        {devices.map(device => (
+          <DeviceCard key={device.device_id} device={device} />
         ))}
       </div>
     </div>
   );
 }
 
-/* ================== DEVICE CARD ================== */
+/* ================= CARD ================= */
 
-function DeviceCard({
-  device_id,
-  room,
-  temperature,
-  humidity,
-  pressure,
-  timestamp,
-  online
-}) {
+function DeviceCard({ device }) {
+  const lastSeenUTC = new Date(device.timestamp);
+  const now = new Date();
+
+  const online =
+    now.getTime() - lastSeenUTC.getTime() <= ONLINE_THRESHOLD_MS;
+
   return (
-    <div className="bg-gray-800 rounded-xl shadow-lg p-5 flex flex-col justify-between border border-gray-700">
+    <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 shadow">
       
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-semibold">{room}</h2>
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="font-semibold">{device.room}</h2>
         <span
-          className={`text-xs font-bold px-2 py-1 rounded-full ${
-            online
-              ? "bg-green-600 text-white"
-              : "bg-red-600 text-white"
+          className={`text-xs px-2 py-1 rounded-full font-bold ${
+            online ? "bg-green-600" : "bg-red-600"
           }`}
         >
           {online ? "ONLINE" : "OFFLINE"}
@@ -73,30 +61,21 @@ function DeviceCard({
       </div>
 
       {/* Device ID */}
-      <p className="text-xs text-gray-400 mb-3">
-        Device ID: <span className="font-mono">{device_id}</span>
+      <p className="text-xs text-gray-400 mb-2">
+        Device ID: <span className="font-mono">{device.device_id}</span>
       </p>
 
-      {/* Sensor Values */}
-      <div className="space-y-2 text-sm">
-        <p>
-          🌡 Temperature:{" "}
-          <span className="font-semibold">{temperature.toFixed(1)} °C</span>
-        </p>
-        <p>
-          💧 Humidity:{" "}
-          <span className="font-semibold">{humidity.toFixed(0)} %</span>
-        </p>
-        <p>
-          🌬 Pressure:{" "}
-          <span className="font-semibold">{pressure.toFixed(0)} hPa</span>
-        </p>
+      {/* Data */}
+      <div className="text-sm space-y-1">
+        <p>🌡 Temp: <b>{device.temperature.toFixed(1)} °C</b></p>
+        <p>💧 Humidity: <b>{device.humidity.toFixed(0)} %</b></p>
+        <p>🌬 Pressure: <b>{device.pressure.toFixed(0)} hPa</b></p>
       </div>
 
-      {/* Timestamp */}
+      {/* Time */}
       <p className="text-xs text-gray-400 mt-4 font-bold">
         Last seen:{" "}
-        {new Date(timestamp + "Z").toLocaleString("en-GB", {
+        {lastSeenUTC.toLocaleString("en-GB", {
           timeZone: "Africa/Lagos",
           hour12: false
         })}
