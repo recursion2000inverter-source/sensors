@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const POLL_INTERVAL = 120000; // 2 minutes
-const OFFLINE_THRESHOLD = 3 * 60 * 1000; // 5 minutes
+const OFFLINE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
 
 export default function App() {
   const [devices, setDevices] = useState([]);
