@@ -11,13 +11,13 @@ export default function App() {
       const data = await res.json();
       setDevices(data);
     } catch (err) {
-      console.error("Fetch failed", err);
+      console.error("Failed to fetch latest devices", err);
     }
   };
 
   useEffect(() => {
     fetchLatest();
-    const interval = setInterval(fetchLatest, 120000);
+    const interval = setInterval(fetchLatest, 120000); // poll every 2 mins
     return () => clearInterval(interval);
   }, []);
 
@@ -28,7 +28,7 @@ export default function App() {
       </h1>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
-        {devices.map(device => (
+        {devices.map((device) => (
           <DeviceCard key={device.device_id} device={device} />
         ))}
       </div>
@@ -36,18 +36,21 @@ export default function App() {
   );
 }
 
-/* ================= CARD ================= */
-
 function DeviceCard({ device }) {
-  const lastSeenUTC = new Date(device.timestamp);
+  const lastSeenUTC = new Date(device.timestamp); // backend sends UTC
   const now = new Date();
 
-  const online =
-    now.getTime() - lastSeenUTC.getTime() <= ONLINE_THRESHOLD_MS;
+  // Determine online status based on UTC timestamp
+  const online = now.getTime() - lastSeenUTC.getTime() <= ONLINE_THRESHOLD_MS;
+
+  // Display timestamp in local timezone correctly
+  const localTime = lastSeenUTC.toLocaleString("en-GB", {
+    hour12: false,
+    timeZoneName: "short",
+  });
 
   return (
     <div className="bg-gray-800 rounded-xl p-5 border border-gray-700 shadow">
-      
       {/* Header */}
       <div className="flex justify-between items-center mb-3">
         <h2 className="font-semibold">{device.room}</h2>
@@ -65,20 +68,16 @@ function DeviceCard({ device }) {
         Device ID: <span className="font-mono">{device.device_id}</span>
       </p>
 
-      {/* Data */}
+      {/* Sensor data */}
       <div className="text-sm space-y-1">
         <p>🌡 Temp: <b>{device.temperature.toFixed(1)} °C</b></p>
         <p>💧 Humidity: <b>{device.humidity.toFixed(0)} %</b></p>
         <p>🌬 Pressure: <b>{device.pressure.toFixed(0)} hPa</b></p>
       </div>
 
-      {/* Time */}
+      {/* Last seen */}
       <p className="text-xs text-gray-400 mt-4 font-bold">
-        Last seen:{" "}
-        {lastSeenUTC.toLocaleString("en-GB", {
-          timeZone: "Africa/Lagos",
-          hour12: false
-        })}
+        Last seen: {localTime}
       </p>
     </div>
   );
